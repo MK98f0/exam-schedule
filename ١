@@ -1,0 +1,113 @@
+from pathlib import Path
+
+import re
+
+# نأخذ آخر نسخة كاملة موجودة ونصحح عرض التوقيت ليكون مثل الجدول الرسمي وليس 24 ساعة
+
+candidates = [
+
+    Path("/mnt/data/النسخة_النهائية_المتكاملة_للاختبارات.html"),
+
+    Path("/mnt/data/النسخة_النهائية_المصححة_رسميًا.html"),
+
+    Path("/mnt/data/النسخة_النهائية_عرض_اخفاء_خفيف.html"),
+
+]
+
+src = next((p for p in candidates if p.exists()), None)
+
+if src is None:
+
+    files = sorted(Path("/mnt/data").glob("*.html"), key=lambda p: p.stat().st_mtime, reverse=True)
+
+    src = files[0]
+
+html = src.read_text(encoding="utf-8")
+
+# تحويل عرض التوقيت من نظام 24 ساعة إلى الصيغة الموجودة في الجداول الرسمية
+
+time_replacements = {
+
+    "13:30": "1:30",
+
+    "13:00": "1:00",
+
+    "12:30": "12:30",
+
+    "12:00": "12:00",
+
+}
+
+for old, new in time_replacements.items():
+
+    html = html.replace(old, new)
+
+# تصحيح مواد دبلوم التعليم العام حسب الصورة الرسمية
+
+fixes = {
+
+    # subject: (day, date, start, end)
+
+    "مهارات اللغة الإنجليزية": ("الخميس", "2026/6/4", "08:00", "11:00"),
+
+    "تقنية المعلومات": ("الخميس", "2026/6/4", "11:30", "1:30"),
+
+    "مواد التخصصات الهندسية والصناعية": ("الأحد", "2026/6/7", "08:00", "10:00"),
+
+    "الرياضة المدرسية": ("الأحد", "2026/6/7", "11:00", "1:00"),
+
+    "اللغة الفرنسية / اللغة الألمانية / اللغة الصينية": ("الاثنين", "2026/6/8", "08:00", "10:00"),
+
+    "الفنون التشكيلية": ("الاثنين", "2026/6/8", "10:30", "12:30"),
+
+    "المهارات الموسيقية": ("الاثنين", "2026/6/8", "10:30", "12:30"),
+
+}
+
+# نعدل صفوف الجدول والبطاقات أينما وجدت لهذه المواد
+
+for subject, (day, date, start, end) in fixes.items():
+
+    # جدول شامل: أي صف يحتوي المادة، استبدل اليوم/التاريخ/التوقيت
+
+    pattern = rf"<tr><td>.*?</td><td>.*?</td><td>{re.escape(subject)}</td><td>.*?</td></tr>"
+
+    repl = f"<tr><td>{day}</td><td>{date}</td><td>{subject}</td><td>{start} - {end}</td></tr>"
+
+    html = re.sub(pattern, repl, html)
+
+    # البطاقة: نبحث عن بطاقة المادة ونعدل معلوماتها
+
+    card_pattern = rf'(<div class="card">\s*<div class="subject">{re.escape(subject)}</div>.*?<div class="phrase">)'
+
+    matches = list(re.finditer(card_pattern, html, flags=re.S))
+
+    for m in reversed(matches):
+
+        start_idx = m.start()
+
+        # نهاية البطاقة عند dua ثم إغلاق div
+
+        end_match = re.search(r'<div class="dua">.*?</div>\s*</div>', html[start_idx:], flags=re.S)
+
+        if not end_match:
+
+            continue
+
+        end_idx = start_idx + end_match.end()
+
+        card = html[start_idx:end_idx]
+
+        card = re.sub(r'<div class="info">📅 اليوم: .*?</div>', f'<div class="info">📅 اليوم: {day}</div>', card)
+
+        card = re.sub(r'<div class="info">📆 التاريخ: .*?</div>', f'<div class="info">📆 التاريخ: {date}</div>', card)
+
+        card = re.sub(r'<div class="info">🕓 التوقيت: من .*? إلى .*?</div>', f'<div class="info">🕓 التوقيت: من {start} إلى {end}</div>', card)
+
+        html = html[:start_idx] + card + html[end_idx:]
+
+out = Path("/mnt/data/النسخة_النهائية_تصحيح_التوقيت.html")
+
+out.write_text(html, encoding="utf-8")
+
+print(out)
